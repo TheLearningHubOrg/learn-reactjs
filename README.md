@@ -277,6 +277,12 @@ This repository contains a comprehensive list of resources, guides, architecture
   - [18. Enterprise Production Hardening: Security Headers, Live Regions & Type-Safe Form Builders](#18-enterprise-production-hardening-security-headers-live-regions--type-safe-form-builders)
   - [19. Complete Modern React 19 API Master Reference & Cheat Sheet](#19-complete-modern-react-19-api-master-reference--cheat-sheet)
   - [20. Production Performance Budgets, Tree-Shaking & Bundle Optimization](#20-production-performance-budgets-tree-shaking--bundle-optimization)
+- [21. Complete React Core & DOM API Reference](#21-complete-react-core--dom-api-reference)
+- [22. Deep Fiber Internals & React Compiler Engineering](#22-deep-fiber-internals--react-compiler-engineering)
+- [23. Suspense Architecture, Advanced Forms & React Router v7 Data APIs](#23-suspense-architecture-advanced-forms--react-router-v7-data-apis)
+- [24. Advanced State, GraphQL, Senior Web Platform APIs & Modern Native CSS](#24-advanced-state-graphql-senior-web-platform-apis--modern-native-css)
+- [25. Scalable Architecture (FSD, Clean Architecture), Production CI/CD & Observability](#25-scalable-architecture-fsd-clean-architecture-production-cicd--observability)
+- [26. Unified React Version Compatibility Matrix & Future Roadmap](#26-unified-react-version-compatibility-matrix--future-roadmap)
 
 - [Resources](#resources)
   - [Official Documentation](#official-documentation)
@@ -9004,6 +9010,2106 @@ When publishing reusable libraries or design systems in a monorepo, mark `"sideE
 | `classnames` | ~1.5 KB | Modern native template literals or lightweight `clsx` | **0.4 KB** |
 | `axios` (simple cases) | ~11 KB | Native browser `fetch()` with `AbortController` | **0 KB** |
 | `numeral` | ~4 KB | Native `Intl.NumberFormat` | **0 KB** |
+
+
+---
+
+## 21. Complete React Core & DOM API Reference
+
+### 21.1 `useDebugValue`: Custom DevTools Formatters & Performance Inspection
+`useDebugValue` provides custom labeling and diagnostics for custom hooks inside the React Developer Tools extension. Rather than logging to `console.log` during renders (which causes side effects), `useDebugValue` outputs structured metadata only when the DevTools inspector actively selects the component:
+
+```tsx
+import { useState, useEffect, useDebugValue } from 'react';
+
+interface NetworkStatus {
+  isOnline: boolean;
+  effectiveType?: '4g' | '3g' | '2g' | 'slow-2g';
+  downlinkSpeedMbps?: number;
+  rttMs?: number;
+}
+
+export function useNetworkStatus(): NetworkStatus {
+  const [status, setStatus] = useState<NetworkStatus>(() => ({
+    isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
+    effectiveType: (navigator as any)?.connection?.effectiveType,
+    downlinkSpeedMbps: (navigator as any)?.connection?.downlink,
+    rttMs: (navigator as any)?.connection?.rtt,
+  }));
+
+  useEffect(() => {
+    const handleOnline = () => setStatus(s => ({ ...s, isOnline: true }));
+    const handleOffline = () => setStatus(s => ({ ...s, isOnline: false }));
+    const connection = (navigator as any)?.connection;
+
+    const handleConnectionChange = () => {
+      setStatus({
+        isOnline: navigator.onLine,
+        effectiveType: connection?.effectiveType,
+        downlinkSpeedMbps: connection?.downlink,
+        rttMs: connection?.rtt,
+      });
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    connection?.addEventListener('change', handleConnectionChange);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      connection?.removeEventListener('change', handleConnectionChange);
+    };
+  }, []);
+
+  // Format value lazily: The 2nd argument (formatter function) only runs when DevTools inspects the component
+  useDebugValue(status, (s) => 
+    s.isOnline 
+      ? `Online (${s.effectiveType ?? 'unknown'}, ${s.downlinkSpeedMbps ?? 0} Mbps, ${s.rttMs ?? 0}ms RTT)` 
+      : 'Offline (Disconnected)'
+  );
+
+  return status;
+}
+```
+
+---
+
+### 21.2 `useId` SSR & Hydration Edge Cases: Multi-Root Prefixes & SVG Isolation
+`useId` generates unique, deterministic identifiers that match across server-rendered HTML and client hydration. However, in enterprise environments where multiple independent React applications coexist on the same page, naive `useId` calls can collide unless configured with an `identifierPrefix`:
+
+```tsx
+import React, { useId } from 'react';
+import { createRoot } from 'react-dom/client';
+
+// 1. Host Application Root (Header / Navigation Shell)
+const navContainer = document.getElementById('nav-root')!;
+const navRoot = createRoot(navContainer, {
+  identifierPrefix: 'enterprise-nav-', // Generates :enterprise-nav-R1:
+});
+
+// 2. Embedded Micro-Frontend Root (Billing Widget)
+const billingContainer = document.getElementById('billing-root')!;
+const billingRoot = createRoot(billingContainer, {
+  identifierPrefix: 'billing-widget-', // Generates :billing-widget-R1: (Prevents collisions)
+});
+
+// 3. Robust SVG Gradient & Mask Reference Isolation
+export function AccessibleRadialGauge({ value, max = 100 }: { value: number; max?: number }) {
+  const gradientId = useId();
+  const filterId = useId();
+  const labelId = useId();
+  const percentage = Math.min(100, Math.max(0, (value / max) * 100));
+
+  return (
+    <div role="progressbar" aria-valuenow={value} aria-valuemin={0} aria-valuemax={max} aria-labelledby={labelId}>
+      <span id={labelId} className="sr-only">Resource Capacity: {percentage}%</span>
+      <svg viewBox="0 0 100 100" width="120" height="120" aria-hidden="true">
+        <defs>
+          <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#3b82f6" />
+            <stop offset="100%" stopColor="#8b5cf6" />
+          </linearGradient>
+          <filter id={filterId} x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="2" stdDeviation="3" floodOpacity="0.2" />
+          </filter>
+        </defs>
+        <circle cx="50" cy="50" r="40" stroke="#e2e8f0" strokeWidth="8" fill="none" />
+        <circle
+          cx="50"
+          cy="50"
+          r="40"
+          stroke={`url(#${gradientId})`}
+          strokeWidth="8"
+          fill="none"
+          strokeDasharray="251.2"
+          strokeDashoffset={251.2 - (251.2 * percentage) / 100}
+          strokeLinecap="round"
+          filter={`url(#${filterId})`}
+          transform="rotate(-90 50 50)"
+          style={{ transition: 'stroke-dashoffset 0.4s ease' }}
+        />
+      </svg>
+    </div>
+  );
+}
+```
+
+---
+
+### 21.3 `useInsertionEffect`: Real-World Dynamic CSS-in-JS Engine Rules
+`useInsertionEffect` executes synchronously **before any DOM mutations occur and before `useLayoutEffect` reads layout**. Its singular purpose is inserting `<style>` elements into the document head before the browser recalculates layout styles, eliminating layout thrashing:
+
+```mermaid
+graph TD
+    RenderPhase["1. Render Phase (Function Components Execute)"] --> InsertionPhase["2. useInsertionEffect (Insert style tags into head)"]
+    InsertionPhase --> DOMMutation["3. DOM Mutation Phase (React updates real DOM nodes)"]
+    DOMMutation --> LayoutPhase["4. useLayoutEffect (Read layout measurements: getBoundingClientRect)"]
+    LayoutPhase --> BrowserPaint["5. Browser Recalculates Layout & Paints Pixels"]
+    BrowserPaint --> PassivePhase["6. useEffect (Asynchronous passive side effects)"]
+```
+
+```tsx
+import { useInsertionEffect } from 'react';
+
+// Lightweight runtime CSS-in-JS rule injector
+const insertedRuleHashes = new Set<string>();
+
+export function useDynamicThemeRules(ruleHash: string, cssText: string): void {
+  useInsertionEffect(() => {
+    if (insertedRuleHashes.has(ruleHash)) return;
+
+    insertedRuleHashes.add(ruleHash);
+    let styleTag = document.querySelector('style[data-app-styles]') as HTMLStyleElement | null;
+    
+    if (!styleTag) {
+      styleTag = document.createElement('style');
+      styleTag.setAttribute('data-app-styles', 'true');
+      document.head.appendChild(styleTag);
+    }
+
+    styleTag.sheet?.insertRule(cssText, styleTag.sheet.cssRules.length);
+  }, [ruleHash, cssText]);
+}
+
+// CRITICAL RULES FOR useInsertionEffect:
+// 1. NEVER access React refs inside useInsertionEffect (the DOM has not been updated yet).
+// 2. NEVER schedule state updates inside useInsertionEffect (will throw errors or cause infinite sync loops).
+// 3. Only use this hook when building CSS-in-JS runtime libraries; application code should use standard CSS/Tailwind.
+```
+
+---
+
+### 21.4 `useMemo` & `useCallback`: When NOT to Use Them
+Overusing memoization is a common source of performance degradation in React applications. Wrapping every function in `useCallback` or every primitive calculation in `useMemo` incurs:
+1. **Memory Allocation**: Instantiating closure instances, dependency array tuples, and internal memoization slot cells on every single render.
+2. **Comparison Cost**: Shallow reference comparison (`Object.is`) of every dependency item on every render tick.
+3. **Garbage Collection Pressure**: Short-lived arrays created for dependencies increase GC frequency.
+
+#### The Computational Cost Threshold Matrix
+
+| Operation | Typical CPU Cost | Recommendation | Rationale |
+|---|---|---|---|
+| String concatenation / template literals | < 0.001 ms | ❌ **Do NOT memoize** | Memoization allocation cost exceeds the operation cost by 10x. |
+| Filtering an array of < 250 items | < 0.02 ms | ❌ **Do NOT memoize** | V8 array iteration is heavily optimized; comparison overhead is comparable. |
+| Sorting/filtering 5,000+ complex items | > 3.0 ms | ✅ **USE `useMemo`** | Prevents expensive CPU work on non-dependent state renders. |
+| Passing callback to native `<button>` | < 0.001 ms | ❌ **Do NOT memoize** | Native DOM elements do not bailout on prop reference equality. |
+| Passing callback to `React.memo` child | N/A | ✅ **USE `useCallback`** | Preserves referential equality to allow child component render bailout. |
+| Providing object to `Context.Provider` | N/A | ✅ **USE `useMemo`** | Prevents all subscribed context consumers from re-rendering unconditionally. |
+
+#### Benchmark Demonstration: Inline vs Memoized Cost
+```tsx
+import React, { useState, useMemo, useCallback } from 'react';
+
+export function MemoizationAuditDemo() {
+  const [count, setCount] = useState(0);
+  const [filterQuery, setFilterQuery] = useState('');
+
+  // ❌ ANTI-PATTERN: Trivial transformation memoized unnecessarily
+  // The cost of allocating `[count]` array + dependency diff exceeds the `+` operator!
+  const doubled = useMemo(() => count * 2, [count]); // DO NOT DO THIS: Just write `const doubled = count * 2;`
+
+  // ❌ ANTI-PATTERN: Native DOM listener memoized
+  // Native <button> does NOT care about referential equality of onClick!
+  const handleNativeClick = useCallback(() => {
+    console.log('Clicked');
+  }, []); // DO NOT DO THIS: Just write `const handleNativeClick = () => { ... };`
+
+  // ✅ LEGITIMATE USE CASE: Context value reference stability
+  const contextValue = useMemo(() => ({
+    query: filterQuery,
+    setQuery: setFilterQuery,
+  }), [filterQuery]);
+
+  // ✅ LEGITIMATE USE CASE: Heavy algorithmic computation (>2ms)
+  const heavyDataSet = useMemo(() => {
+    const list = [];
+    for (let i = 0; i < 10000; i++) {
+      if (i.toString().includes(filterQuery)) {
+        list.push({ id: i, label: `Telemetry Node ${i}` });
+      }
+    }
+    return list;
+  }, [filterQuery]);
+
+  return (
+    <div>
+      <button onClick={() => setCount(c => c + 1)}>Increment: {doubled}</button>
+      <input value={filterQuery} onChange={(e) => setFilterQuery(e.target.value)} />
+      <ExpensiveList items={heavyDataSet} />
+    </div>
+  );
+}
+
+// Child wrapped in React.memo requires stable reference props to bailout
+const ExpensiveList = React.memo(function ExpensiveList({ items }: { items: Array<{ id: number; label: string }> }) {
+  return (
+    <ul>
+      {items.slice(0, 50).map(item => (
+        <li key={item.id}>{item.label}</li>
+      ))}
+    </ul>
+  );
+});
+```
+
+---
+
+### 21.5 `React.cache` & `React.cacheSignal`: Request-Scoped Server Memoization
+In React Server Components and Server Functions, `React.cache` provides **per-request deduplication**. Unlike `useMemo` (which caches per component instance across re-renders on the client), `React.cache` lives for the lifetime of a single HTTP server request and is shared across the entire server component tree:
+
+```tsx
+import { cache } from 'react';
+
+export interface UserProfile {
+  id: string;
+  name: string;
+  role: 'ADMIN' | 'USER' | 'AUDITOR';
+}
+
+// 1. Request-scoped memoized data fetcher
+// If 15 different Server Components call `getCurrentUser('usr_102')` during the same page request,
+// the underlying database query executes EXACTLY ONCE.
+export const getCurrentUser = cache(async (userId: string): Promise<UserProfile> => {
+  console.log(`[DB Query Executed] Fetching user: ${userId}`);
+  // Database simulation
+  return {
+    id: userId,
+    name: 'Sarah Connor',
+    role: 'ADMIN',
+  };
+});
+
+// 2. Request abort signal integration (cacheSignal pattern)
+export const getAuditedLogs = cache(async (tenantId: string, signal?: AbortSignal) => {
+  const response = await fetch(`https://api.internal.enterprise/logs?tenant=${tenantId}`, {
+    signal,
+    headers: { 'X-Request-Context': 'RSC' }
+  });
+  if (!response.ok) throw new Error('Audit service unavailable');
+  return response.json();
+});
+
+// React Server Component A
+export async function HeaderAvatar({ userId }: { userId: string }) {
+  const user = await getCurrentUser(userId); // Query 1 (Executes)
+  return <div className="avatar">{user.name[0]}</div>;
+}
+
+// React Server Component B (Deeply nested in navigation sidebar)
+export async function NavigationPermissions({ userId }: { userId: string }) {
+  const user = await getCurrentUser(userId); // Re-uses Query 1 cache instantly (0ms latency)
+  return <span>Role: {user.role}</span>;
+}
+```
+
+---
+
+### 21.6 `React.Children` vs Modern Component Composition
+`React.Children` provides legacy utilities (`map`, `forEach`, `count`, `only`, `toArray`) to inspect opaque `children` props. However, `React.Children` has severe pitfalls:
+- It breaks when children are conditional fragments (`<>{condition && <Item />}</>`).
+- It cannot inspect components rendered dynamically by wrappers.
+- It degrades TypeScript prop validation.
+
+#### Modern Composition Replacements
+```tsx
+import React, { ReactNode } from 'react';
+
+// ❌ LEGACY ANTI-PATTERN: React.Children.map inspecting and modifying children
+export function LegacyCardList({ children }: { children: ReactNode }) {
+  return (
+    <div className="card-list">
+      {React.Children.map(children, (child, index) => {
+        if (!React.isValidElement(child)) return child;
+        // Injecting props implicitly breaks component contracts and TypeScript!
+        return React.cloneElement(child as React.ReactElement<any>, {
+          isLast: index === React.Children.count(children) - 1,
+        });
+      })}
+    </div>
+  );
+}
+
+// ✅ MODERN ENTERPRISE PATTERN: Explicit Slot Props & Render Props
+interface ModernCardProps {
+  header?: ReactNode;
+  footer?: ReactNode;
+  children: ReactNode;
+  actions?: (controls: { expand: () => void; close: () => void }) => ReactNode;
+}
+
+export function ModernEnterpriseCard({ header, footer, children, actions }: ModernCardProps) {
+  const [isOpen, setIsOpen] = React.useState(true);
+
+  return (
+    <div className="enterprise-card border rounded-lg p-4">
+      {header && <header className="font-bold pb-2 border-b">{header}</header>}
+      <div className="py-3">{children}</div>
+      {actions && (
+        <div className="flex gap-2 py-2">
+          {actions({ expand: () => setIsOpen(true), close: () => setIsOpen(false) })}
+        </div>
+      )}
+      {footer && <footer className="pt-2 border-t text-sm text-gray-500">{footer}</footer>}
+    </div>
+  );
+}
+```
+
+---
+
+### 21.7 `React.forwardRef` Migration to React 19 Native `ref` Props
+In React 19, `forwardRef` is formally deprecated. Components accept `ref` directly as a regular prop. Furthermore, function refs now support **cleanup return callbacks** (`() => void`), guaranteeing accurate teardown when elements unmount or refs change:
+
+```tsx
+import React, { useEffect, useRef } from 'react';
+
+interface SearchInputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+  onClear?: () => void;
+  // In React 19, ref is declared directly on the props interface!
+  ref?: React.Ref<HTMLInputElement>;
+}
+
+// ✅ REACT 19 NATIVE REF PROP PATTERN (No forwardRef wrapper needed!)
+export function SearchInput({ onClear, ref, className = '', ...rest }: SearchInputProps) {
+  return (
+    <div className="search-wrapper relative">
+      <input
+        ref={ref}
+        type="search"
+        className={`search-input border px-3 py-2 rounded ${className}`}
+        {...rest}
+      />
+      {onClear && (
+        <button type="button" onClick={onClear} aria-label="Clear search input">
+          ✕
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ✅ REACT 19 REF CLEANUP FUNCTION PATTERN
+export function ResizeObserverContainer({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      ref={(element) => {
+        if (!element) return;
+
+        // Setup side-effect on mount
+        const observer = new ResizeObserver((entries) => {
+          for (const entry of entries) {
+            console.log('Container resized:', entry.contentRect.width);
+          }
+        });
+        observer.observe(element);
+
+        // React 19 Ref Cleanup Function: Runs automatically when element unmounts or changes!
+        return () => {
+          observer.disconnect();
+          console.log('Observer disconnected successfully');
+        };
+      }}
+      className="monitored-viewport p-4 border"
+    >
+      {children}
+    </div>
+  );
+}
+```
+
+---
+
+### 21.8 `React.flushSync`: Internals, Synchronous Layout Measurement & Hazards
+`flushSync` forces React to immediately drain the pending update queue and mutate the DOM synchronously, bypassing the concurrent scheduler.
+
+> [!CAUTION]
+> `flushSync` severely harms performance by forcing synchronous layout recalculation and interrupting render batching. Use it exclusively when synchronous DOM measurement is required before the user sees a paint frame (e.g. auto-scrolling chat history or measuring bounding boxes before triggering animations).
+
+```tsx
+import React, { useState, useRef } from 'react';
+import { flushSync } from 'react-dom';
+
+export function TerminalLogViewer() {
+  const [logs, setLogs] = useState<string[]>(['System initialized.']);
+  const terminalRef = useRef<HTMLDivElement>(null);
+
+  const appendLog = (newEntry: string) => {
+    // Force React to synchronously commit DOM updates before measuring scroll height
+    flushSync(() => {
+      setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${newEntry}`]);
+    });
+
+    // Directly after flushSync, the DOM is guaranteed to reflect the new logs!
+    if (terminalRef.current) {
+      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+    }
+  };
+
+  return (
+    <div className="terminal-wrapper p-4 bg-black text-green-400 font-mono rounded">
+      <div ref={terminalRef} className="h-48 overflow-y-auto space-y-1">
+        {logs.map((log, idx) => (
+          <div key={idx}>{log}</div>
+        ))}
+      </div>
+      <button
+        onClick={() => appendLog('Telemetry ping ack')}
+        className="mt-3 px-3 py-1 bg-green-800 text-white rounded"
+      >
+        Append Log Entry
+      </button>
+    </div>
+  );
+}
+```
+
+---
+
+### 21.9 Complete React DOM Resource Preloading Lifecycle
+React 19 introduces built-in DOM resource loading primitives. Calling these functions instructs React to hoist `<link>` and `<script>` elements into the document `<head>` and deduplicate identical resources across the application:
+
+```tsx
+import { preconnect, prefetchDNS, preload, preinit, preloadModule, preinitModule } from 'react-dom';
+
+export function ProductPageTemplate({ productId }: { productId: string }) {
+  // 1. preconnect: Early TLS handshake & connection warmup to CDN
+  preconnect('https://assets.enterprise-cdn.com', { crossOrigin: 'anonymous' });
+
+  // 2. prefetchDNS: Resolve DNS lookup before user clicks a known external link
+  prefetchDNS('https://analytics.global.services');
+
+  // 3. preload: Instruct browser to download a critical high-priority image or font
+  preload('https://assets.enterprise-cdn.com/fonts/inter-variable.woff2', {
+    as: 'font',
+    type: 'font/woff2',
+    crossOrigin: 'anonymous',
+  });
+
+  // 4. preinit: Download AND immediately execute/evaluate a stylesheet
+  preinit('https://assets.enterprise-cdn.com/css/critical-commerce.css', {
+    as: 'style',
+    precedence: 'high', // Controls stylesheet cascade ordering!
+  });
+
+  // 5. preloadModule / preinitModule: Preload or immediately initialize ES Module scripts
+  preloadModule('https://assets.enterprise-cdn.com/esm/3d-canvas-viewer.js', {
+    as: 'script',
+  });
+
+  return (
+    <article className="product-container">
+      <h1>Product Analysis Dashboard: {productId}</h1>
+      <p>All critical fonts, stylesheets, and module dependencies were pre-initialized in the document head.</p>
+    </article>
+  );
+}
+```
+
+---
+
+### 21.10 Hydration Error Handling & Root Error Hooks (`onCaughtError`, `onUncaughtError`, `onRecoverableError`)
+React 19 replaces opaque console errors with structured root error callbacks:
+
+```tsx
+import { hydrateRoot, createRoot } from 'react-dom/client';
+import App from './App';
+
+const container = document.getElementById('root')!;
+
+// Production Hydration Root with Comprehensive Telemetry Callbacks
+hydrateRoot(container, <App />, {
+  // 1. onCaughtError: Triggered when an Error Boundary catches an error during rendering
+  onCaughtError(error, errorInfo) {
+    console.error('[Telemetry: Caught Error]', error);
+    // Send to Sentry / Datadog
+    window.telemetryClient?.captureException(error, {
+      extra: { componentStack: errorInfo.componentStack },
+    });
+  },
+
+  // 2. onUncaughtError: Triggered when an error escapes all boundaries
+  onUncaughtError(error, errorInfo) {
+    console.error('[CRITICAL: Uncaught Error]', error);
+    // Trigger global fallback UI or alert page
+    document.body.classList.add('app-fatal-error');
+  },
+
+  // 3. onRecoverableError: Triggered on hydration mismatches where React successfully self-healed
+  onRecoverableError(error, errorInfo) {
+    console.warn('[Telemetry: Hydration Mismatch Recovered]', error);
+    window.telemetryClient?.logWarning('Hydration Mismatch Auto-Healed', {
+      stack: errorInfo.componentStack,
+    });
+  },
+});
+```
+
+---
+
+### 21.11 Multiple React Roots & Micro-Frontend Isolation
+When embedding React components inside existing multi-page legacy applications (or in micro-frontend architectures), multiple `createRoot` instances can coexist on the same DOM page. Each root has its own independent Fiber tree, scheduler queue, and event listening delegates:
+
+```mermaid
+graph TD
+    HTMLDocument["HTML Document Body"] --> HostHeader["#header-container"]
+    HTMLDocument --> LegacyMain["#legacy-server-rendered-content"]
+    HTMLDocument --> WidgetContainer["#sidebar-chat-widget"]
+    
+    HostHeader --> RootA["createRoot(header-container, { identifierPrefix: 'hdr-' })"]
+    WidgetContainer --> RootB["createRoot(widget-container, { identifierPrefix: 'chat-' })"]
+    
+    RootA --> TreeA["Header Fiber Tree (React 19)"]
+    RootB --> TreeB["Chat Widget Fiber Tree (React 19)"]
+```
+
+```tsx
+import { createRoot } from 'react-dom/client';
+
+// Shared state between independent roots via lightweight Pub/Sub or CustomEvent
+class CrossRootEventBus {
+  static emit(eventName: string, detail: any) {
+    window.dispatchEvent(new CustomEvent(eventName, { detail }));
+  }
+
+  static subscribe(eventName: string, callback: (detail: any) => void) {
+    const handler = (e: Event) => callback((e as CustomEvent).detail);
+    window.addEventListener(eventName, handler);
+    return () => window.removeEventListener(eventName, handler);
+  }
+}
+
+// Root 1: User Profile Header
+const headerMount = document.getElementById('header-root');
+if (headerMount) {
+  const headerRoot = createRoot(headerMount, { identifierPrefix: 'hdr-' });
+  headerRoot.render(<GlobalHeader onLogout={() => CrossRootEventBus.emit('auth:logout', null)} />);
+}
+
+// Root 2: Independent Chat Assistant Widget
+const chatMount = document.getElementById('chat-widget-root');
+if (chatMount) {
+  const chatRoot = createRoot(chatMount, { identifierPrefix: 'chat-' });
+  chatRoot.render(<FloatingChatAssistant bus={CrossRootEventBus} />);
+}
+```
+
+
+---
+
+## 22. Deep Fiber Internals & React Compiler Engineering
+
+### 22.1 Complete Fiber Flags Bitmask Matrix
+React's Fiber architecture uses a 32-bit integer bitmask (`fiber.flags` and `fiber.subtreeFlags`) to track pending DOM side effects and lifecycle operations across the tree. Bitwise operations enable constant-time checking and effect accumulation:
+
+```mermaid
+graph TD
+    BeginWork["1. beginWork(current, workInProgress, renderLanes)"] --> DiffProps["Diff oldProps vs newProps"]
+    DiffProps --> SetFlags["Set flags on workInProgress (e.g. Placement | Update)"]
+    SetFlags --> BubbleFlags["completeUnitOfWork bubbles flags to subtreeFlags"]
+    BubbleFlags --> CommitPhase["Commit Root: If (root.subtreeFlags !== NoFlags) traverse effects"]
+```
+
+#### Fiber Flags 32-Bit Bitmask Definitions
+
+| Flag Name | Binary Bitmask | Hex Value | Purpose & Commit Action |
+|---|---|---|---|
+| `NoFlags` | `0b00000000000000` | `0x000` | No pending work on this Fiber node. |
+| `PerformedWork` | `0b00000000000001` | `0x001` | Component executed during render phase (used for DevTools Profiler). |
+| `Placement` | `0b00000000000010` | `0x002` | Newly mounted node or moved node; insert into DOM via `parentNode.insertBefore`. |
+| `Update` | `0b00000000000100` | `0x004` | Existing node changed; update DOM attributes, text, or schedule layout effects. |
+| `Deletion` | `0b00000000001000` | `0x008` | Node removed from render tree; run cleanup effects, detach refs, remove DOM node. |
+| `ChildDeletion` | `0b00000000010000` | `0x010` | One or more children of this Fiber were deleted (marks parent to run deletions). |
+| `ContentReset` | `0b00000000100000` | `0x020` | Reset text content of host element before mounting children. |
+| `Callback` | `0b00000001000000` | `0x040` | Class component `setState` callback or root render callback. |
+| `DidCapture` | `0b00000010000000` | `0x080` | Error boundary captured a thrown error during render. |
+| `Ref` | `0b00000100000000` | `0x100` | Ref changed or element mounted; execute ref assignment or cleanup. |
+| `Snapshot` | `0b00001000000000` | `0x200` | Run `getSnapshotBeforeUpdate` before mutating real DOM. |
+| `Passive` | `0b00010000000000` | `0x400` | Schedule `useEffect` cleanup and create phases asynchronously after paint. |
+| `Hydrating` | `0b00100000000000` | `0x800` | Node is currently undergoing SSR HTML hydration diffing. |
+| `Visibility` | `0b01000000000000` | `0x1000` | Suspense / Offscreen component toggled between visible and hidden. |
+
+```typescript
+// Bitwise Flag Accumulation in Fiber Reconciliation
+export const Placement = /*                    */ 0b0000000000000010;
+export const Update = /*                       */ 0b0000000000000100;
+export const Deletion = /*                     */ 0b0000000000001000;
+export const Ref = /*                          */ 0b0000000100000000;
+export const Passive = /*                      */ 0b0000010000000000;
+
+// Accumulate pending work
+let flags = 0;
+flags |= Placement; // Mark for insertion
+flags |= Update;    // Mark for attribute update
+flags |= Ref;       // Mark for ref attachment
+
+// Check for presence in commit phase: O(1) bitwise test
+const needsDOMInsertion = (flags & Placement) !== 0; // true
+const needsDeletion = (flags & Deletion) !== 0;       // false
+
+// Clear flag after execution
+flags &= ~Placement;
+```
+
+---
+
+### 22.2 Update Queue Mechanics: Circular Singly-Linked Lists
+Fiber update queues do not use JavaScript arrays. Arrays require continuous memory re-allocations and element shifting (`Array.prototype.shift()` is O(N)). Instead, React uses a **circular singly-linked list** where `shared.pending` points to the *newest* update, whose `.next` pointer points directly to the *oldest* update:
+
+```mermaid
+graph LR
+    SharedPending["fiber.updateQueue.shared.pending"] --> Update3["Update C (Newest)"]
+    Update3 -- ".next" --> Update1["Update A (Oldest)"]
+    Update1 -- ".next" --> Update2["Update B (Middle)"]
+    Update2 -- ".next" --> Update3
+```
+
+```typescript
+export interface Update<State> {
+  lane: number;
+  action: State | ((prevState: State) => State);
+  next: Update<State> | null;
+}
+
+export interface SharedQueue<State> {
+  pending: Update<State> | null;
+}
+
+// Enqueue state update in O(1) time without array allocation
+export function enqueueUpdate<State>(queue: SharedQueue<State>, update: Update<State>): void {
+  const pending = queue.pending;
+  if (pending === null) {
+    // First update in queue: points to itself to close the circle
+    update.next = update;
+  } else {
+    // Splice new update into the circular list:
+    // 1. New update points to oldest update (pending.next)
+    update.next = pending.next;
+    // 2. Previously newest update points to new update
+    pending.next = update;
+  }
+  // 3. Mark new update as the latest pending update
+  queue.pending = update;
+}
+
+// Process updates during component render
+export function processUpdateQueue<State>(
+  baseState: State,
+  queue: SharedQueue<State>,
+  renderLanes: number
+): State {
+  const pending = queue.pending;
+  if (pending === null) return baseState;
+
+  // Break circular list into linear list for processing
+  const first = pending.next!;
+  pending.next = null; // Unlink
+
+  let update: Update<State> | null = first;
+  let newState = baseState;
+
+  while (update !== null) {
+    // Check if update priority matches current render lane
+    if ((update.lane & renderLanes) !== 0) {
+      const action = update.action;
+      newState = typeof action === 'function' 
+        ? (action as (prev: State) => State)(newState) 
+        : action;
+    }
+    update = update.next;
+  }
+
+  return newState;
+}
+```
+
+---
+
+### 22.3 `beginWork` Subtree Bailout Conditions
+During the work loop, React visits every Fiber node. If a component and all of its descendants have no pending updates, React executes a **Subtree Bailout**, completely skipping reconciliation for the entire subtree:
+
+```mermaid
+graph TD
+    Node["beginWork(current, workInProgress, renderLanes)"] --> Cond1{"1. Does oldProps === newProps?"}
+    Cond1 -- No --> FullRender["Execute Component Function (Full Re-render)"]
+    Cond1 -- Yes --> Cond2{"2. Has scheduled update on this Fiber? (lanes & renderLanes !== 0)"}
+    Cond2 -- Yes --> FullRender
+    Cond2 -- No --> Cond3{"3. Did any Context value change?"}
+    Cond3 -- Yes --> FullRender
+    Cond3 -- No --> CheckSubtree{"4. Does subtree have work? (childLanes & renderLanes !== 0)"}
+    CheckSubtree -- Yes --> CloneChildren["Bailout Self, but recurse into children"]
+    CheckSubtree -- No --> CompleteBailout["BAILOUT COMPLETE: Return null (Skip entire subtree)"]
+```
+
+```typescript
+// React Fiber beginWork Bailout Logic (Simplified Core Architecture)
+function checkSubtreeBailout(
+  current: Fiber,
+  workInProgress: Fiber,
+  renderLanes: number
+): Fiber | null {
+  const oldProps = current.memoizedProps;
+  const newProps = workInProgress.pendingProps;
+
+  // Condition 1: Referential equality of props
+  if (oldProps === newProps) {
+    const hasScheduledUpdate = (workInProgress.lanes & renderLanes) !== 0;
+    
+    // Condition 2: No pending state update on this component
+    if (!hasScheduledUpdate && !checkHasContextChanged(workInProgress)) {
+      // Condition 3: Check if ANY child in the subtree has pending work
+      if ((workInProgress.childLanes & renderLanes) === 0) {
+        // ENTIRE SUBTREE HAS ZERO WORK: Return null immediately!
+        // This skips thousands of child components in 0.001ms.
+        return null;
+      }
+
+      // Self has no work, but a child does: clone child Fiber and continue
+      return bailoutOnAlreadyFinishedWork(current, workInProgress, renderLanes);
+    }
+  }
+
+  // Bailout rejected: Must execute component render function
+  return updateFunctionComponent(current, workInProgress, workInProgress.type, newProps, renderLanes);
+}
+```
+
+---
+
+### 22.4 Lanes Bitwise Priority Calculation Matrix
+React 18 & 19 replaced legacy expiration times with **Lanes**—a 31-bit priority system where lower bits represent higher priority:
+
+| Lane Group | Bit Value | Priority | Use Case |
+|---|---|---|---|
+| `SyncLane` | `0b0000000000000000000000000000001` (1) | Highest | Discrete user inputs (`click`, `keydown`, `input`), `flushSync`. |
+| `InputContinuousLane` | `0b0000000000000000000000000000010` (2) | High | Continuous user inputs (`mousemove`, `scroll`, `touchmove`). |
+| `DefaultLane` | `0b0000000000000000000000000010000` (16) | Normal | Data fetching responses, standard `setState` in timers or network handlers. |
+| `TransitionLanes` | `0b0000000000000000001111111100000` (64..4096) | Low | Updates wrapped in `startTransition`, non-blocking page changes. |
+| `RetryLanes` | `0b0000000011111111000000000000000` | Background | Suspense boundaries retrying data loading. |
+| `IdleLane` | `0b0100000000000000000000000000000` | Lowest | Non-urgent telemetry, background prefetching. |
+
+```typescript
+// Determining the highest priority pending lane
+export function getHighestPriorityLane(lanes: number): number {
+  // Bitwise trick: isolates the lowest set bit (highest priority in React Lanes)
+  return lanes & -lanes;
+}
+
+// Example:
+const pendingLanes = 0b00010010; // Contains DefaultLane (16) and InputContinuousLane (2)
+const nextWorkLane = getHighestPriorityLane(pendingLanes);
+console.log(nextWorkLane); // 2 (InputContinuousLane takes immediate precedence!)
+```
+
+---
+
+### 22.5 Scheduler vs Browser Event Loop Execution Timeline
+React's Concurrent Scheduler does **not** use `requestAnimationFrame` (which fires only once per refresh cycle) or `setTimeout` (which incurs a mandatory 4ms clamping penalty after 5 nested calls). Instead, React uses `MessageChannel` to schedule macrotasks with near-zero latency, yielding back to the browser every **5 milliseconds**:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant ReactScheduler as React Scheduler (MessageChannel)
+    participant V8CallStack as V8 Call Stack
+    participant BrowserUI as Browser Paint & Layout
+    
+    ReactScheduler->>V8CallStack: Execute Fiber Work Loop (WorkInProgress)
+    Note over V8CallStack: Component A renders (1.2ms)<br/>Component B renders (2.1ms)<br/>Component C renders (1.9ms)
+    V8CallStack->>ReactScheduler: Check shouldYieldToHost() -> Total: 5.2ms > 5ms budget!
+    ReactScheduler->>BrowserUI: YIELD EXECUTION TO MAIN THREAD!
+    Note over BrowserUI: Browser handles user tap/scroll and renders 60fps frame!
+    BrowserUI->>ReactScheduler: Main thread idle -> PostMessage triggers next task
+    ReactScheduler->>V8CallStack: Resume Fiber Work Loop from exact interrupted point!
+```
+
+---
+
+### 22.6 React Compiler Compilation Pipeline (AST → HIR → Scopes → Code)
+The React Compiler operates as an optimizing compiler at build time. It parses JavaScript/TypeScript AST, transforms it into **High-Level Intermediate Representation (HIR)**, analyzes variable mutability and data flows, and injects granular memoization slots automatically:
+
+```mermaid
+graph TD
+    SourceCode["1. Source Code JSX / TypeScript"] --> BabelParser["2. Babel / SWC AST Parser"]
+    BabelParser --> BuildHIR["3. Build HIR (Control Flow Graph + SSA Form)"]
+    BuildHIR --> AnalyzeScopes["4. Reactive Scope Analysis (Infer Dependencies)"]
+    AnalyzeScopes --> PruneScopes["5. Prune Immutables (Identify Pure Values)"]
+    PruneScopes --> CodegenMemo["6. Codegen: Insert _c[] cache slots"]
+```
+
+#### What the Compiler Emits Under the Hood
+```tsx
+// 1. Source Component Authored by Developer:
+export function UserAnalyticsCard({ user, filter }: { user: { name: string; score: number }; filter: string }) {
+  const formattedScore = user.score * 100;
+  const matches = user.name.toLowerCase().includes(filter.toLowerCase());
+
+  return (
+    <div className="card">
+      <h3>{user.name}</h3>
+      <p>Score: {formattedScore}</p>
+      {matches && <span>Active Match</span>}
+    </div>
+  );
+}
+
+// 2. Optimized Output Produced by React Compiler:
+import { c as _c } from "react/compiler-runtime";
+
+export function UserAnalyticsCard_Compiled({ user, filter }: any) {
+  const $ = _c(6); // Allocate 6-slot persistent cache array for this component
+  let t0;
+  if ($[0] !== user.score) {
+    t0 = user.score * 100;
+    $[0] = user.score;
+    $[1] = t0;
+  } else {
+    t0 = $[1];
+  }
+  const formattedScore = t0;
+
+  let t1;
+  if ($[2] !== user.name || $[3] !== filter) {
+    t1 = user.name.toLowerCase().includes(filter.toLowerCase());
+    $[2] = user.name;
+    $[3] = filter;
+    $[4] = t1;
+  } else {
+    t1 = $[4];
+  }
+  const matches = t1;
+
+  // React Compiler memoizes the JSX element tree directly!
+  let t2;
+  if ($[5] !== formattedScore || $[6] !== matches || $[7] !== user.name) {
+    t2 = (
+      <div className="card">
+        <h3>{user.name}</h3>
+        <p>Score: {formattedScore}</p>
+        {matches && <span>Active Match</span>}
+      </div>
+    );
+    $[5] = formattedScore;
+    $[6] = matches;
+    $[7] = user.name;
+    $[8] = t2;
+  } else {
+    t2 = $[8];
+  }
+  return t2;
+}
+```
+
+---
+
+### 22.7 `eslint-plugin-react-compiler` Diagnostics & Bailout Causes
+The React Compiler strictly enforces the **Rules of React**. If a component violates these rules, the compiler will safely **bailout** and leave the component unmemoized rather than emitting broken code.
+
+```bash
+npm install -D eslint-plugin-react-compiler
+```
+
+```json
+// .eslintrc.json
+{
+  "plugins": ["react-compiler"],
+  "rules": {
+    "react-compiler/react-compiler": "error"
+  }
+}
+```
+
+#### Top Compiler Bailout Causes & Fixes
+
+| Violation Code | Problem Description | Corrective Refactoring |
+|---|---|---|
+| `Mutating-Props-Or-State` | Modifying an array or object prop directly during render (`props.items.push(x)`). | Make a shallow copy before mutating (`[...props.items, x]`). |
+| `Calling-Hook-Conditionally` | Invoking a hook inside an `if` block, loop, or nested callback. | Move all hooks to top level unconditionally. |
+| `Accessing-Ref-During-Render` | Reading `ref.current` during the render phase to compute JSX. | Move `ref.current` access into `useEffect` or event handlers. |
+| `Mutating-External-Variables` | Writing to global module variables during component execution. | Use `useRef` or encapsulate state inside a store. |
+| `"use no memo"` Directive | Explicitly opt out of compiler optimization on legacy code. | Add `"use no memo";` as the first line of the function. |
+
+
+---
+
+## 23. Suspense Architecture, Advanced Forms & React Router v7 Data APIs
+
+### 23.1 Suspense Boundary Lifecycle & Thrown Promise Mechanics
+When a component suspends (via `use(promise)` or a compatible data fetching library), it halts execution by **throwing the pending Promise**:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant WorkLoop as Fiber Work Loop
+    participant Component as Suspending Component
+    participant SuspenseBoundary as Parent Suspense Boundary
+    participant Scheduler as React Scheduler
+    
+    WorkLoop->>Component: Render Component (beginWork)
+    Component->>Component: Read pending Promise via use(promise)
+    Component-->>WorkLoop: THROW Promise!
+    WorkLoop->>SuspenseBoundary: Catch thrown Promise in work loop
+    SuspenseBoundary->>SuspenseBoundary: Switch to rendering fallback UI
+    SuspenseBoundary->>Scheduler: Attach listener: promise.then(pingSuspenseBoundary)
+    Note over Scheduler: Network request completes -> Promise resolves
+    Scheduler->>WorkLoop: Ping! Re-render Suspense boundary with resolved data!
+    WorkLoop->>Component: Component re-renders -> use() returns data directly!
+```
+
+```tsx
+import React, { Suspense, use, useState, useTransition } from 'react';
+
+// Simulated async data fetcher
+function fetchUserProfile(userId: string): Promise<{ id: string; name: string; email: string }> {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      resolve({ id: userId, name: 'Alex Mercer', email: 'alex@enterprise.dev' });
+    }, 1200);
+  });
+}
+
+// Child component that suspends natively using React 19 use()
+function UserProfileDetails({ userPromise }: { userPromise: Promise<{ id: string; name: string; email: string }> }) {
+  // If userPromise is pending, use() throws the Promise to the nearest Suspense boundary!
+  const user = use(userPromise);
+
+  return (
+    <div className="profile-details p-4 border rounded bg-white dark:bg-gray-800">
+      <h3 className="text-lg font-bold">{user.name}</h3>
+      <p className="text-gray-500">{user.email}</p>
+      <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">Verified</span>
+    </div>
+  );
+}
+
+// Nested Suspense boundaries: Child loading does NOT collapse parent shell!
+export function ProfileDashboard() {
+  const [userPromise, setUserPromise] = useState(() => fetchUserProfile('usr_1'));
+  const [isPending, startTransition] = useTransition();
+
+  const handleRefresh = () => {
+    // startTransition prevents the existing UI from disappearing into a spinner!
+    startTransition(() => {
+      setUserPromise(fetchUserProfile('usr_1'));
+    });
+  };
+
+  return (
+    <div className="dashboard-container p-6">
+      <div className="flex justify-between items-center mb-4">
+        <h1 className="text-xl font-bold">Enterprise Profile</h1>
+        <button
+          onClick={handleRefresh}
+          disabled={isPending}
+          className="px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
+        >
+          {isPending ? 'Refreshing...' : 'Refresh Data'}
+        </button>
+      </div>
+
+      {/* Parent boundary maintains dashboard shell */}
+      <Suspense fallback={<div className="skeleton-card animate-pulse h-32 bg-gray-200 rounded" />}>
+        <UserProfileDetails userPromise={userPromise} />
+      </Suspense>
+    </div>
+  );
+}
+```
+
+---
+
+### 23.2 Preventing Fallback Flashes with `startTransition` and `useDeferredValue`
+When users click pagination controls, tabs, or search filters, rendering a blank loading spinner for 100ms causes visual flickering ("fallback flash"). Wrapping updates in `startTransition` instructs React to **retain the stale UI on screen** while preparing the next screen in the background:
+
+```tsx
+import React, { useState, useDeferredValue } from 'react';
+
+export function DeferredSearchExplorer({ allItems }: { allItems: string[] }) {
+  const [query, setQuery] = useState('');
+  
+  // useDeferredValue creates a low-priority copy of query
+  const deferredQuery = useDeferredValue(query);
+  const isStale = query !== deferredQuery;
+
+  const filteredItems = allItems.filter(item => 
+    item.toLowerCase().includes(deferredQuery.toLowerCase())
+  );
+
+  return (
+    <div className="search-explorer">
+      <input
+        type="search"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Type to filter..."
+        className="border px-3 py-2 rounded w-full"
+      />
+
+      {/* Visually dim stale results while deferred query renders in background */}
+      <div style={{ opacity: isStale ? 0.6 : 1, transition: 'opacity 0.2s ease' }} className="mt-4">
+        {isStale && <span className="text-xs text-blue-500">Updating results...</span>}
+        <ul className="divide-y border rounded mt-2">
+          {filteredItems.slice(0, 100).map((item, idx) => (
+            <li key={idx} className="p-2">{item}</li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+```
+
+---
+
+### 23.3 Dynamic Field Arrays with React Hook Form (`useFieldArray`)
+Enterprise forms frequently require dynamic lists (e.g. invoice line items, email recipients, custom metadata tags). `useFieldArray` provides O(1) row management without re-rendering the parent form:
+
+```tsx
+import React from 'react';
+import { useForm, useFieldArray } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+
+const invoiceSchema = z.object({
+  invoiceNumber: z.string().min(3, 'Invoice number required'),
+  items: z.array(z.object({
+    description: z.string().min(1, 'Description required'),
+    quantity: z.number().min(1, 'Min 1'),
+    unitPrice: z.number().min(0.01, 'Price must be positive'),
+  })).min(1, 'At least one line item required'),
+});
+
+type InvoiceFormValues = z.infer<typeof invoiceSchema>;
+
+export function DynamicInvoiceForm() {
+  const { register, control, handleSubmit, formState: { errors } } = useForm<InvoiceFormValues>({
+    resolver: zodResolver(invoiceSchema),
+    defaultValues: {
+      invoiceNumber: 'INV-2026-001',
+      items: [{ description: 'Cloud Compute Instance', quantity: 1, unitPrice: 120.00 }],
+    },
+  });
+
+  const { fields, append, remove, move } = useFieldArray({
+    control,
+    name: 'items',
+  });
+
+  const onSubmit = (data: InvoiceFormValues) => {
+    console.log('Invoice Submitted:', data);
+  };
+
+  return (
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 p-6 max-w-2xl border rounded-lg">
+      <h2 className="text-xl font-bold">Generate Enterprise Invoice</h2>
+
+      <div>
+        <label className="block text-sm font-semibold">Invoice Number</label>
+        <input {...register('invoiceNumber')} className="border px-3 py-1.5 rounded w-full" />
+        {errors.invoiceNumber && <p className="text-red-500 text-xs mt-1">{errors.invoiceNumber.message}</p>}
+      </div>
+
+      <div className="space-y-2">
+        <h3 className="text-md font-semibold">Line Items</h3>
+        {fields.map((field, index) => (
+          <div key={field.id} className="flex gap-2 items-center">
+            <input
+              {...register(`items.${index}.description` as const)}
+              placeholder="Description"
+              className="border px-2 py-1 rounded flex-1"
+            />
+            <input
+              type="number"
+              {...register(`items.${index}.quantity` as const, { valueAsNumber: true })}
+              placeholder="Qty"
+              className="border px-2 py-1 rounded w-20"
+            />
+            <input
+              type="number"
+              step="0.01"
+              {...register(`items.${index}.unitPrice` as const, { valueAsNumber: true })}
+              placeholder="Price"
+              className="border px-2 py-1 rounded w-28"
+            />
+            <button
+              type="button"
+              onClick={() => remove(index)}
+              className="px-2 py-1 bg-red-100 text-red-600 rounded"
+              aria-label={`Remove row ${index + 1}`}
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex justify-between pt-4">
+        <button
+          type="button"
+          onClick={() => append({ description: '', quantity: 1, unitPrice: 0 })}
+          className="px-3 py-1.5 bg-gray-200 rounded text-sm hover:bg-gray-300"
+        >
+          + Add Line Item
+        </button>
+
+        <button type="submit" className="px-4 py-1.5 bg-green-600 text-white font-semibold rounded">
+          Submit Invoice
+        </button>
+      </div>
+    </form>
+  );
+}
+```
+
+---
+
+### 23.4 Client-Side Drag-and-Drop File Upload with Canvas Preview
+```tsx
+import React, { useState, useRef, DragEvent } from 'react';
+
+export function DragDropUploader({ onFileSelected }: { onFileSelected: (file: File) => void }) {
+  const [isDragging, setIsDragging] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const processFile = (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      alert('Only image files are allowed');
+      return;
+    }
+
+    // Generate local thumbnail via FileReader / Canvas
+    const reader = new FileReader();
+    reader.onload = (e) => setPreviewUrl(e.target?.result as string);
+    reader.readAsDataURL(file);
+
+    // Simulate progress upload
+    setUploadProgress(0);
+    const interval = setInterval(() => {
+      setUploadProgress((prev) => {
+        if (prev >= 100) {
+          clearInterval(interval);
+          onFileSelected(file);
+          return 100;
+        }
+        return prev + 20;
+      });
+    }, 150);
+  };
+
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files?.[0]) {
+      processFile(e.dataTransfer.files[0]);
+    }
+  };
+
+  return (
+    <div
+      onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+      onDragLeave={() => setIsDragging(false)}
+      onDrop={handleDrop}
+      onClick={() => fileInputRef.current?.click()}
+      className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
+        isDragging ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-300'
+      }`}
+    >
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => e.target.files?.[0] && processFile(e.target.files[0])}
+      />
+
+      {previewUrl ? (
+        <div className="space-y-3">
+          <img src={previewUrl} alt="Upload preview" className="h-32 mx-auto rounded object-cover" />
+          <div className="w-full bg-gray-200 rounded-full h-2 max-w-xs mx-auto">
+            <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${uploadProgress}%` }} />
+          </div>
+          <span className="text-xs text-gray-500">{uploadProgress}% uploaded</span>
+        </div>
+      ) : (
+        <div>
+          <p className="font-semibold text-gray-700 dark:text-gray-200">Drag & drop asset here, or click to browse</p>
+          <p className="text-xs text-gray-400 mt-1">PNG, JPG, WebP up to 10MB</p>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+---
+
+### 23.5 React Router v7: `useFetcher`, `useBlocker` & Memory Routers
+React Router v7 separates navigation from data mutation via `useFetcher`, enabling background updates (e.g. liking a post, adding to cart) without triggering URL changes:
+
+```tsx
+import { useFetcher, useBlocker } from 'react-router-dom';
+import React, { useState } from 'react';
+
+// 1. useFetcher: Optimistic Background Mutation without Page Navigation
+export function BookmarkButton({ articleId, initialBookmarked }: { articleId: string; initialBookmarked: boolean }) {
+  const fetcher = useFetcher();
+
+  // Optimistic UI state: Use fetcher.formData if a mutation is actively in flight!
+  const isBookmarked = fetcher.formData 
+    ? fetcher.formData.get('bookmarked') === 'true'
+    : initialBookmarked;
+
+  return (
+    <fetcher.Form method="post" action={`/api/articles/${articleId}/bookmark`}>
+      <input type="hidden" name="bookmarked" value={isBookmarked ? 'false' : 'true'} />
+      <button
+        type="submit"
+        className={`px-3 py-1 text-sm rounded border ${
+          isBookmarked ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-700'
+        }`}
+      >
+        {isBookmarked ? '★ Bookmarked' : '☆ Bookmark'}
+      </button>
+    </fetcher.Form>
+  );
+}
+
+// 2. useBlocker: Unsaved Changes Navigation Guard
+export function UnsavedFormGuard({ isDirty }: { isDirty: boolean }) {
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) => isDirty && currentLocation.pathname !== nextLocation.pathname
+  );
+
+  return blocker.state === 'blocked' ? (
+    <div role="alertdialog" className="modal-backdrop fixed inset-0 bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white dark:bg-gray-800 p-6 rounded-lg max-w-sm w-full space-y-4 shadow-xl">
+        <h3 className="font-bold text-lg">Discard Unsaved Changes?</h3>
+        <p className="text-sm text-gray-500">You have unsaved form entries. Navigating away will lose your progress.</p>
+        <div className="flex justify-end gap-2">
+          <button onClick={() => blocker.reset()} className="px-3 py-1.5 border rounded">
+            Stay on Page
+          </button>
+          <button onClick={() => blocker.proceed()} className="px-3 py-1.5 bg-red-600 text-white rounded">
+            Discard & Leave
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+}
+```
+
+
+---
+
+## 24. Advanced State, GraphQL, Senior Web Platform APIs & Modern Native CSS
+
+### 24.1 XState v5 Finite State Machines in React
+State machines eliminate impossible UI states by enforcing strict mathematical state transitions. In complex workflows (e.g. multi-step payments, biometric authentication), state machines guarantee that transitions only occur when valid:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Authenticating : SUBMIT_CREDENTIALS
+    Authenticating --> MFA_Challenge : REQUIRES_2FA
+    Authenticating --> Authorized : SUCCESS
+    Authenticating --> Failed : INVALID_CREDENTIALS
+    MFA_Challenge --> Authorized : VERIFY_OTP
+    MFA_Challenge --> Failed : OTP_EXPIRED
+    Failed --> Idle : RETRY
+    Authorized --> [*] : LOGOUT
+```
+
+```tsx
+import { setup, createActor } from 'xstate';
+import { useActor } from '@xstate/react';
+import React from 'react';
+
+// Define XState v5 Auth Machine Setup
+export const authMachine = setup({
+  types: {
+    context: {} as { user: { name: string; email: string } | null; errorMessage: string | null },
+    events: {} as
+      | { type: 'SUBMIT'; email: string }
+      | { type: 'RESOLVE_SUCCESS'; user: { name: string; email: string } }
+      | { type: 'REJECT_ERROR'; message: string }
+      | { type: 'RETRY' }
+      | { type: 'LOGOUT' },
+  },
+}).createMachine({
+  id: 'authentication',
+  initial: 'idle',
+  context: { user: null, errorMessage: null },
+  states: {
+    idle: {
+      on: { SUBMIT: 'authenticating' },
+    },
+    authenticating: {
+      on: {
+        RESOLVE_SUCCESS: {
+          target: 'authorized',
+          actions: ({ context, event }) => { context.user = event.user; },
+        },
+        REJECT_ERROR: {
+          target: 'failed',
+          actions: ({ context, event }) => { context.errorMessage = event.message; },
+        },
+      },
+    },
+    failed: {
+      on: { RETRY: 'idle' },
+    },
+    authorized: {
+      on: {
+        LOGOUT: {
+          target: 'idle',
+          actions: ({ context }) => { context.user = null; },
+        },
+      },
+    },
+  },
+});
+
+export const authActor = createActor(authMachine).start();
+
+export function XStateAuthWidget() {
+  const [snapshot, send] = useActor(authActor);
+
+  return (
+    <div className="p-6 border rounded-lg max-w-md">
+      <h3 className="font-bold text-lg">XState v5 Security Terminal</h3>
+      <p className="text-sm text-gray-500 mb-4">Current State: <code className="font-mono bg-gray-100 px-1 py-0.5 rounded">{snapshot.value}</code></p>
+
+      {snapshot.matches('idle') && (
+        <button
+          onClick={() => {
+            send({ type: 'SUBMIT', email: 'admin@enterprise.dev' });
+            setTimeout(() => {
+              send({ type: 'RESOLVE_SUCCESS', user: { name: 'DevOps Lead', email: 'admin@enterprise.dev' } });
+            }, 1000);
+          }}
+          className="px-4 py-2 bg-blue-600 text-white rounded"
+        >
+          Authenticate Credentials
+        </button>
+      )}
+
+      {snapshot.matches('authenticating') && (
+        <div className="flex items-center gap-2 text-blue-600">
+          <div className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full" />
+          <span>Validating cryptographic tokens...</span>
+        </div>
+      )}
+
+      {snapshot.matches('authorized') && (
+        <div className="space-y-3">
+          <p className="text-green-600 font-semibold">Welcome, {snapshot.context.user?.name}</p>
+          <button onClick={() => send({ type: 'LOGOUT' })} className="px-3 py-1 bg-gray-200 rounded text-sm">
+            Revoke Session
+          </button>
+        </div>
+      )}
+
+      {snapshot.matches('failed') && (
+        <div className="text-red-600 space-y-2">
+          <p>Error: {snapshot.context.errorMessage}</p>
+          <button onClick={() => send({ type: 'RETRY' })} className="px-3 py-1 bg-red-100 rounded text-sm">
+            Try Again
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+---
+
+### 24.2 Normalized Relational State & `useUndoRedo` Time-Travel Hook
+Storing relational data (e.g. Users having many Posts) deeply nested in state leads to duplication and synchronization bugs. Normalizing state into tables (`byId` dictionaries and `allIds` arrays) guarantees single-source-of-truth updates:
+
+```tsx
+import { useState, useCallback } from 'react';
+
+// Time-travel history manager hook
+export function useUndoRedo<T>(initialPresent: T, maxHistoryDepth = 50) {
+  const [past, setPast] = useState<T[]>([]);
+  const [present, setPresent] = useState<T>(initialPresent);
+  const [future, setFuture] = useState<T[]>([]);
+
+  const canUndo = past.length > 0;
+  const canRedo = future.length > 0;
+
+  const set = useCallback((newPresent: T | ((curr: T) => T)) => {
+    setPresent((curr) => {
+      const resolved = typeof newPresent === 'function' ? (newPresent as (c: T) => T)(curr) : newPresent;
+      if (Object.is(curr, resolved)) return curr;
+
+      setPast((prevPast) => [...prevPast.slice(-maxHistoryDepth + 1), curr]);
+      setFuture([]); // Clear future history on new mutation
+      return resolved;
+    });
+  }, [maxHistoryDepth]);
+
+  const undo = useCallback(() => {
+    if (!canUndo) return;
+    const previous = past[past.length - 1];
+    const newPast = past.slice(0, past.length - 1);
+
+    setPast(newPast);
+    setFuture((prevFuture) => [present, ...prevFuture]);
+    setPresent(previous);
+  }, [canUndo, past, present]);
+
+  const redo = useCallback(() => {
+    if (!canRedo) return;
+    const next = future[0];
+    const newFuture = future.slice(1);
+
+    setPast((prevPast) => [...prevPast, present]);
+    setFuture(newFuture);
+    setPresent(next);
+  }, [canRedo, future, present]);
+
+  return { state: present, set, undo, redo, canUndo, canRedo };
+}
+```
+
+---
+
+### 24.3 GraphQL Subscriptions & Apollo Client Normalized Caching
+GraphQL Subscriptions stream real-time events over WebSockets via `graphql-ws`. Apollo Client normalizes incoming entities automatically by their `__typename` and `id`:
+
+```tsx
+import { ApolloClient, InMemoryCache, HttpLink, split } from '@apollo/client';
+import { GraphQLWsLink } from '@apollo/client/link/subscriptions';
+import { createClient } from 'graphql-ws';
+import { getMainDefinition } from '@apollo/client/utilities';
+
+// 1. HTTP Link for Queries and Mutations
+const httpLink = new HttpLink({
+  uri: 'https://api.enterprise.io/graphql',
+  headers: { authorization: `Bearer ${localStorage.getItem('token')}` }
+});
+
+// 2. WebSocket Link for Real-Time Subscriptions
+const wsLink = new GraphQLWsLink(
+  createClient({
+    url: 'wss://api.enterprise.io/graphql/subscriptions',
+    connectionParams: { authToken: localStorage.getItem('token') },
+  })
+);
+
+// 3. Directional Split: route queries to HTTP and subscriptions to WebSocket
+const splitLink = split(
+  ({ query }) => {
+    const definition = getMainDefinition(query);
+    return definition.kind === 'OperationDefinition' && definition.operation === 'subscription';
+  },
+  wsLink,
+  httpLink
+);
+
+// 4. Normalized Cache Configuration with Custom Pagination Merge
+export const apolloClient = new ApolloClient({
+  link: splitLink,
+  cache: new InMemoryCache({
+    typePolicies: {
+      Query: {
+        fields: {
+          feedItems: {
+            keyArgs: ['filter'], // Cache separately by filter
+            merge(existing = [], incoming) {
+              return [...existing, ...incoming]; // Infinite scroll pagination merge
+            },
+          },
+        },
+      },
+    },
+  }),
+});
+```
+
+#### Automatic Type Generation with `@graphql-codegen/cli` (`codegen.ts`)
+```ts
+import type { CodegenConfig } from '@graphql-codegen/cli';
+
+const config: CodegenConfig = {
+  schema: 'https://api.enterprise.io/graphql',
+  documents: ['src/**/*.graphql'],
+  generates: {
+    './src/generated/graphql.ts': {
+      plugins: ['typescript', 'typescript-operations', 'typescript-react-apollo'],
+      config: {
+        withHooks: true,
+        withRefetchFn: true,
+      },
+    },
+  },
+};
+export default config;
+```
+
+---
+
+### 24.4 Senior Web Platform APIs for Enterprise Frontend Systems
+
+#### 1. Web Locks API (`navigator.locks`): Multi-Tab Concurrency Control
+When multiple browser tabs run concurrently, writing simultaneously to IndexedDB causes data corruption. The Web Locks API provides cross-tab mutex locks:
+
+```tsx
+export async function performSafeMultiTabSync(accountId: string, updatePayload: any) {
+  if (!('locks' in navigator)) {
+    console.warn('Web Locks API not supported; falling back to direct write');
+    return executeDatabaseWrite(updatePayload);
+  }
+
+  // Request an exclusive cross-tab lock for this account
+  await navigator.locks.request(`sync_lock_${accountId}`, { mode: 'exclusive' }, async (lock) => {
+    console.log(`Acquired lock: ${lock.name}. Only this tab can mutate the store now!`);
+    await executeDatabaseWrite(updatePayload);
+    // Lock is automatically released when this async callback finishes!
+  });
+}
+
+async function executeDatabaseWrite(data: any) {
+  // IndexedDB transaction simulation
+  await new Promise((r) => setTimeout(r, 200));
+}
+```
+
+#### 2. Web Crypto API (`crypto.subtle`): Client-Side AES-GCM Encryption
+```tsx
+export async function encryptLocalData(plaintext: string, secretKeyHex: string): Promise<{ ciphertext: ArrayBuffer; iv: Uint8Array }> {
+  const encoder = new TextEncoder();
+  const encodedData = encoder.encode(plaintext);
+  const iv = crypto.getRandomValues(new Uint8Array(12)); // 96-bit IV for AES-GCM
+
+  const keyBuffer = Uint8Array.from(secretKeyHex.match(/.{1,2}/g)!.map((byte) => parseInt(byte, 16)));
+  const cryptoKey = await crypto.subtle.importKey('raw', keyBuffer, { name: 'AES-GCM' }, false, ['encrypt']);
+
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    cryptoKey,
+    encodedData
+  );
+
+  return { ciphertext, iv };
+}
+```
+
+#### 3. Native View Transitions API Wrapper Hook
+```tsx
+import { useState } from 'react';
+
+export function useViewTransitionState<T>(initialValue: T) {
+  const [value, setValue] = useState<T>(initialValue);
+
+  const setWithTransition = (newValue: T | ((prev: T) => T)) => {
+    if (!('startViewTransition' in document)) {
+      setValue(newValue);
+      return;
+    }
+
+    // Native browser view transition smoothly animates DOM mutations!
+    (document as any).startViewTransition(() => {
+      setValue(newValue);
+    });
+  };
+
+  return [value, setWithTransition] as const;
+}
+```
+
+---
+
+### 24.5 Modern Native CSS for React Developers
+
+#### 1. CSS Cascade Layers (`@layer`)
+Eliminate specificity wars across CSS resets, component libraries, and utility classes:
+
+```css
+/* global.css */
+@layer reset, base, components, utilities;
+
+@layer reset {
+  *, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+  }
+}
+
+@layer components {
+  /* Component styles naturally yield to utility classes regardless of selector specificity! */
+  .btn-primary {
+    background-color: #2563eb;
+    color: #ffffff;
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
+  }
+}
+
+@layer utilities {
+  /* Utilities ALWAYS win, even against higher-specificity component selectors */
+  .p-0 { padding: 0 !important; }
+  .hidden { display: none; }
+}
+```
+
+#### 2. Relational Parent Selector (`:has()`) & Native CSS Nesting
+```css
+/* Card changes border when containing an invalid form input */
+.enterprise-card {
+  border: 1px solid #e2e8f0;
+  padding: 1.5rem;
+  border-radius: 0.5rem;
+
+  /* Native CSS Nesting */
+  &:has(input:invalid) {
+    border-color: #ef4444;
+    background-color: #fef2f2;
+  }
+
+  /* Target parent card when a dark-mode toggle inside is checked */
+  &:has(.dark-mode-switch:checked) {
+    background-color: #0f172a;
+    color: #f8fafc;
+  }
+}
+```
+
+#### 3. Modern Color Spaces & `color-mix()`
+Create dynamic translucent accents and shades at runtime directly in CSS without Sass or JavaScript helpers:
+
+```css
+:root {
+  --brand-primary: #3b82f6;
+  /* Mix 15% brand color with 85% transparent for focus rings */
+  --brand-focus-ring: color-mix(in srgb, var(--brand-primary) 15%, transparent);
+  /* Mix 80% brand color with 20% black for pressed states */
+  --brand-pressed: color-mix(in srgb, var(--brand-primary) 80%, #000000);
+}
+
+.action-btn {
+  background-color: var(--brand-primary);
+  outline-color: var(--brand-focus-ring);
+}
+.action-btn:active {
+  background-color: var(--brand-pressed);
+}
+```
+
+
+---
+
+## 25. Scalable Architecture (FSD, Clean Architecture), Production CI/CD & Observability
+
+### 25.1 Feature-Sliced Design (FSD) Architecture
+Feature-Sliced Design (FSD) organizes enterprise frontend code into standardized layers with strict **unidirectional dependency rules**. Code in a layer can only import from layers below it, completely preventing circular dependencies and spaghetti architectures:
+
+```mermaid
+graph TD
+    App["1. app/ (Providers, global styles, router initialization)"] --> Pages["2. pages/ (Full routed views, composition layer)"]
+    Pages --> Widgets["3. widgets/ (Complex self-contained UI blocks: Header, Sidebar, Feed)"]
+    Widgets --> Features["4. features/ (User interactions with business value: AuthByEmail, AddToCart)"]
+    Features --> Entities["5. entities/ (Business entities: User, Product, Order)"]
+    Entities --> Shared["6. shared/ (UI primitives, API client, design tokens, utility helpers)"]
+```
+
+#### FSD Public API Contract (`entities/user/index.ts`)
+Each slice must expose a strict public API (`index.ts`). External code may only import from the slice root, never reaching into internal implementation files:
+
+```typescript
+// src/entities/user/index.ts (Strict Public API Entrypoint)
+export { UserCard } from './ui/UserCard';
+export { useUserPermissions } from './model/useUserPermissions';
+export type { UserProfile, UserRole } from './model/types';
+export { userApi } from './api/userApi';
+
+// ✅ ALLOWED (Importing from public API):
+// import { UserCard, UserProfile } from '@/entities/user';
+
+// ❌ FORBIDDEN BY ESLINT (Deep internal import breaks encapsulation):
+// import { UserCard } from '@/entities/user/ui/UserCard';
+```
+
+---
+
+### 25.2 Domain-Driven Design (DDD) & Clean/Hexagonal Frontend Architecture
+Clean Architecture isolates domain logic from UI frameworks and transport protocols:
+
+```mermaid
+graph LR
+    subgraph UI Layer
+        ReactComponent["React UI Component / Custom Hook"]
+    end
+    subgraph Application Layer
+        UseCase["PlaceOrderUseCase (Business Logic)"]
+    end
+    subgraph Domain Layer
+        Entity["Order Entity (Pure TypeScript)"]
+        Port["OrderRepositoryPort (Interface)"]
+    end
+    subgraph Infrastructure Layer
+        Adapter["HttpOrderRepository (Fetch / REST)"]
+    end
+    
+    ReactComponent --> UseCase
+    UseCase --> Entity
+    UseCase --> Port
+    Adapter -.implements.-> Port
+```
+
+```typescript
+// 1. DOMAIN LAYER: Pure TypeScript Entity (No React or UI imports!)
+export class OrderEntity {
+  constructor(
+    public readonly id: string,
+    public readonly items: Array<{ id: string; price: number; quantity: number }>,
+    public readonly discountCode?: string
+  ) {}
+
+  public calculateTotal(): number {
+    const subtotal = this.items.reduce((acc, item) => acc + item.price * item.quantity, 0);
+    if (this.discountCode === 'ENTERPRISE20') {
+      return subtotal * 0.8;
+    }
+    return subtotal;
+  }
+}
+
+// 2. DOMAIN PORT: Interface Contract
+export interface OrderRepositoryPort {
+  save(order: OrderEntity): Promise<{ success: boolean; orderId: string }>;
+  getById(id: string): Promise<OrderEntity>;
+}
+
+// 3. APPLICATION LAYER: Use Case (Pure business orchestrator)
+export class PlaceOrderUseCase {
+  constructor(private orderRepo: OrderRepositoryPort) {}
+
+  async execute(items: Array<{ id: string; price: number; quantity: number }>, discountCode?: string) {
+    if (items.length === 0) throw new Error('Cannot place an empty order');
+    const order = new OrderEntity(`ord_${Date.now()}`, items, discountCode);
+    const total = order.calculateTotal();
+    const result = await this.orderRepo.save(order);
+    return { orderId: result.orderId, total };
+  }
+}
+
+// 4. INFRASTRUCTURE LAYER: Concrete HTTP Repository Adapter
+export class HttpOrderRepository implements OrderRepositoryPort {
+  async save(order: OrderEntity): Promise<{ success: boolean; orderId: string }> {
+    const res = await fetch('/api/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: order.id, items: order.items, total: order.calculateTotal() }),
+    });
+    return res.json();
+  }
+
+  async getById(id: string): Promise<OrderEntity> {
+    const res = await fetch(`/api/orders/${id}`);
+    const data = await res.json();
+    return new OrderEntity(data.id, data.items, data.discountCode);
+  }
+}
+```
+
+---
+
+### 25.3 Webpack & Rspack Module Federation for Micro-Frontends
+Module Federation allows multiple independent builds to form a single application at runtime, sharing singleton instances of React and React-DOM:
+
+```javascript
+// host/rspack.config.js (Shell Application)
+const { ModuleFederationPlugin } = require('@rspack/core').container;
+
+module.exports = {
+  plugins: [
+    new ModuleFederationPlugin({
+      name: 'host_shell',
+      remotes: {
+        billing_mfe: 'billing_mfe@https://billing.enterprise.com/remoteEntry.js',
+      },
+      shared: {
+        react: { singleton: true, eager: true, requiredVersion: '^19.0.0' },
+        'react-dom': { singleton: true, eager: true, requiredVersion: '^19.0.0' },
+      },
+    }),
+  ],
+};
+```
+
+```tsx
+// React Dynamic Remote Import in Host App
+import React, { Suspense, lazy } from 'react';
+
+// Lazy load the remote micro-frontend module
+const RemoteBillingWidget = lazy(() => import('billing_mfe/BillingWidget') as Promise<{ default: React.ComponentType<any> }>);
+
+export function EnterpriseHostDashboard() {
+  return (
+    <div className="dashboard-shell p-6">
+      <h1>Enterprise Management Console</h1>
+      <Suspense fallback={<div className="p-4 border rounded animate-pulse">Loading Remote Billing Engine...</div>}>
+        <RemoteBillingWidget tenantId="tenant_9482" />
+      </Suspense>
+    </div>
+  );
+}
+```
+
+---
+
+### 25.4 Production GitHub Actions CI/CD Pipeline (`.github/workflows/ci.yml`)
+```yaml
+name: Production Quality & Delivery Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Lint, Typecheck & Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Static Code Analysis (ESLint)
+        run: pnpm run lint
+
+      - name: TypeScript Contract Validation
+        run: pnpm run typecheck
+
+      - name: Unit & Component Tests (Vitest)
+        run: pnpm run test:unit --coverage
+
+  e2e-and-a11y:
+    name: Playwright E2E & WCAG Accessibility
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install Dependencies & Browsers
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps
+
+      - name: Run Playwright Tests with Axe Core Scans
+        run: pnpm exec playwright test
+
+  container-build:
+    name: Docker Build & Push to Registry
+    needs: [validate, e2e-and-a11y]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push Production Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+```
+
+---
+
+### 25.5 OpenTelemetry Distributed Tracing & W3C Trace Context
+OpenTelemetry traces requests from client-side React actions all the way to backend microservices, correlating frontend performance with database queries:
+
+```tsx
+import { WebTracerProvider } from '@opentelemetry/sdk-trace-web';
+import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
+import { ZoneContextManager } from '@opentelemetry/context-zone';
+import { trace } from '@opentelemetry/api';
+
+// 1. Initialize OpenTelemetry Browser Provider
+const provider = new WebTracerProvider();
+provider.addSpanProcessor(
+  new BatchSpanProcessor(
+    new OTLPTraceExporter({ url: 'https://telemetry.enterprise.io/v1/traces' })
+  )
+);
+provider.register({ contextManager: new ZoneContextManager() });
+
+const tracer = trace.getTracer('react-client-app');
+
+// 2. Instrumented API Client attaching W3C Traceparent Header
+export async function tracedFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  const span = tracer.startSpan(`HTTP ${options.method || 'GET'} ${url}`);
+
+  try {
+    const correlationId = `req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const headers = new Headers(options.headers);
+    headers.set('X-Correlation-ID', correlationId);
+    headers.set('traceparent', `00-${span.spanContext().traceId}-${span.spanContext().spanId}-01`);
+
+    const response = await fetch(url, { ...options, headers });
+    span.setAttribute('http.status_code', response.status);
+    return response;
+  } catch (error: any) {
+    span.recordException(error);
+    span.setStatus({ code: 2, message: error.message });
+    throw error;
+  } finally {
+    span.end();
+  }
+}
+```
+
+
+---
+
+## 26. Unified React Version Compatibility Matrix & Future Roadmap
+
+### 26.1 Unified React 17 → 18 → 19 → 20 Compatibility Matrix
+
+| Architectural Capability | React 17 (Legacy) | React 18 (Concurrent) | React 19 (Modern) | React 20+ (Future Roadmap) |
+|---|---|---|---|---|
+| **Rendering Engine** | Synchronous Reconciler | Concurrent Scheduler (Lanes) | Concurrent + Actions Pipeline | Full Reactive Scopes Engine |
+| **State Batching** | Event-handler only | Automatic Batching everywhere | Automatic + Transition batching | Fully deterministic auto-batch |
+| **Server Components (RSC)** | ❌ Unsupported | Experimental / Framework-only | ✅ First-Class Primitive | Standardized across all runtimes |
+| **Form Mutations** | Manual `onSubmit` handlers | Manual transitions | ✅ `useActionState` & Actions | Multi-action coordinated transactions |
+| **Optimistic Updates** | Manual rollbacks in state | Ad-hoc reducer tracking | ✅ `useOptimistic` hook | Automated transactional rollbacks |
+| **Component Memoization** | Manual `useMemo` / `useCallback` | Manual `useMemo` / `useCallback` | 🚀 **React Compiler** (Build-time) | Zero manual memoization required |
+| **Ref Passing** | Mandatory `forwardRef` | Mandatory `forwardRef` | ✅ Native `ref` prop on functions | Native `ref` everywhere |
+| **Ref Teardown** | ❌ Cleanup callbacks unsupported | ❌ Cleanup callbacks unsupported | ✅ Function ref cleanup `() => void` | Automated signal cancellation |
+| **Resource Preloading** | Manual `<head>` scripts | Limited framework hacks | ✅ Built-in `preload`, `preinit` | Automated dynamic asset bundling |
+| **Offscreen Component** | ❌ Unsupported | Experimental `unstable_Offscreen`| `<Activity mode="hidden">` | ✅ Production First-Class `<Activity>` |
+
+---
+
+### 26.2 React 19 Breaking Changes & Migration Recipes
+
+#### 1. Removed: `defaultProps` on Function Components
+```tsx
+// ❌ BROKEN IN REACT 19:
+function UserBadge({ name, role }: { name: string; role?: string }) {
+  return <span>{name} ({role})</span>;
+}
+UserBadge.defaultProps = { role: 'Viewer' }; // Ignored with warning or error in React 19!
+
+// ✅ REACT 19 MIGRATION: Use ES6 default function parameters
+function UserBadge({ name, role = 'Viewer' }: { name: string; role?: string }) {
+  return <span>{name} ({role})</span>;
+}
+```
+
+#### 2. Deprecated: `React.forwardRef`
+```tsx
+// ❌ LEGACY REACT 18 PATTERN:
+const CustomTextInput = React.forwardRef<HTMLInputElement, InputProps>((props, ref) => {
+  return <input ref={ref} {...props} />;
+});
+
+// ✅ REACT 19 NATIVE PATTERN:
+function CustomTextInput({ ref, ...props }: InputProps & { ref?: React.Ref<HTMLInputElement> }) {
+  return <input ref={ref} {...props} />;
+}
+```
+
+#### 3. Removed: Legacy Context (`contextTypes`, `getChildContext`)
+Legacy string-based context APIs from React 0.14 have been completely deleted. Migrate unconditionally to `React.createContext()` and `React.use(Context)`:
+
+```tsx
+// ✅ MODERN REACT 19 CONTEXT CONSUMPTION
+const ThemeContext = React.createContext<'light' | 'dark'>('light');
+
+export function ThemedWidget() {
+  // use() unwraps context even conditionally inside if-statements!
+  const theme = React.use(ThemeContext);
+  return <div className={`theme-${theme}`}>Themed Content</div>;
+}
+```
+
+#### 4. Deprecated: `findDOMNode`
+`findDOMNode` broke tree encapsulation and prevented Fiber optimizations. Migrate directly to DOM refs:
+```tsx
+// ❌ REMOVED:
+// const domNode = ReactDOM.findDOMNode(this);
+
+// ✅ MODERN:
+// Attach a ref directly to the host element: <div ref={this.containerRef} />
+```
+
+---
+
+### 26.3 React 20+ Forward-Looking Roadmap
+
+#### 1. The `<Activity>` Primitive (Formerly `<Offscreen>`)
+`<Activity>` enables components to defer rendering and preserve internal state when hidden from view. Unlike conditional rendering (`{isVisible && <Tab />}` which destroys all state) or CSS `display: none` (which continues rendering updates and running layout costs), `<Activity mode="hidden">` halts CPU rendering loops while keeping DOM nodes and memory state alive:
+
+```tsx
+import { useState } from 'react';
+// Forward-looking React primitive
+import { Activity } from 'react';
+
+export function TabbedInterface() {
+  const [activeTab, setActiveTab] = useState<'analytics' | 'settings'>('analytics');
+
+  return (
+    <div>
+      <nav className="flex gap-4 border-b pb-2">
+        <button onClick={() => setActiveTab('analytics')}>Analytics</button>
+        <button onClick={() => setActiveTab('settings')}>Settings</button>
+      </nav>
+
+      {/* Analytics state, chart canvas buffers, and scroll positions are completely preserved */}
+      <Activity mode={activeTab === 'analytics' ? 'visible' : 'hidden'}>
+        <AnalyticsDashboardView />
+      </Activity>
+
+      <Activity mode={activeTab === 'settings' ? 'visible' : 'hidden'}>
+        <UserSettingsView />
+      </Activity>
+    </div>
+  );
+}
+```
+
+#### 2. Native Server Actions Streaming
+Future React releases integrate Server Actions directly into the streaming HTTP response pipe, allowing Server Functions to emit multiple partial state yields (NDJSON or binary streams) back to the client action dispatcher before terminating.
+
 
 
 ## Interview Questions
